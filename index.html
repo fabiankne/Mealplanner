@@ -835,7 +835,7 @@ function pgRec(el,acts){
 }
 function openAddRecipe(){S.recipeEditId=null;S.recipeTmp=[];document.getElementById('dlg-recipe-t').textContent='Add Recipe';document.getElementById('recipe-name').value='';popRSel();renderRTmp();document.getElementById('dlg-recipe').showModal();}
 function openEditRecipe(id){const rec=S.recipes.find(x=>x.id===id);if(!rec)return;S.recipeEditId=id;S.recipeTmp=rec.items.map(i=>({...i}));document.getElementById('dlg-recipe-t').textContent='Edit Recipe';document.getElementById('recipe-name').value=rec.name;popRSel();renderRTmp();document.getElementById('dlg-recipe').showModal();}
-function popRSel(){document.getElementById('recipe-food-sel').innerHTML=S.foods.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');}
+function popRSel(){document.getElementById('recipe-food-sel').innerHTML=S.foods.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');}
 function addRecipeItem(){const fid=document.getElementById('recipe-food-sel').value,q=+document.getElementById('recipe-food-qty').value||1;if(!fid)return;S.recipeTmp.push({foodId:fid,quantity:q});document.getElementById('recipe-food-qty').value='';renderRTmp();}
 function renderRTmp(){
   document.getElementById('recipe-items').innerHTML=S.recipeTmp.map((item,i)=>{const f=fById(item.foodId);return`<div class="erow"><span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f?esc(f.name):'?'}</span><input class="fld" type="number" min="0.01" step="0.1" value="${item.quantity}" onchange="S.recipeTmp[${i}].quantity=+this.value;renderRTmp()" style="padding:7px 10px"><button class="btn bd bic" onclick="S.recipeTmp.splice(${i},1);renderRTmp()">✕</button></div>`;}).join('');
@@ -912,7 +912,7 @@ function dupPlan(id){const src=S.plans.find(p=>p.id===id);if(!src)return;const c
 function delPlan(id){if(S.plans.length<=1)return alert('Cannot delete the only plan.');if(!confirm('Delete plan?'))return;S.plans=S.plans.filter(p=>p.id!==id);if(S.activePlanId===id)S.activePlanId=S.plans[0]?.id;if(S.viewingPlanId===id)S.viewingPlanId=S.plans[0]?.id;save();render();}
 function addNewMeal(planId,sub){S.editingMeal={planId,sub,mi:-1,isNew:true};S.mealTmp=[];document.getElementById('dlg-meal-t').textContent='New Meal';document.getElementById('meal-name-inp').value='';document.getElementById('dlg-meal-del').style.display='none';popMSel();renderMTmp();document.getElementById('dlg-meal').showModal();}
 function openEditMeal(planId,sub,mi){const plan=S.plans.find(p=>p.id===planId);if(!plan)return;const meal=plan[sub]?.meals[mi];if(!meal)return;S.editingMeal={planId,sub,mi,isNew:false};S.mealTmp=(meal.items||[]).map(i=>({...i}));document.getElementById('dlg-meal-t').textContent='Edit Meal';document.getElementById('meal-name-inp').value=meal.name||'';document.getElementById('dlg-meal-del').style.display='';popMSel();renderMTmp();document.getElementById('dlg-meal').showModal();}
-function popMSel(){document.getElementById('meal-food-sel').innerHTML=[...S.foods,...S.recipes].map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');}
+function popMSel(){document.getElementById('meal-food-sel').innerHTML=[...S.foods,...S.recipes].slice().sort((a,b)=>a.name.localeCompare(b.name)).map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');}
 function addMealItem(){const fid=document.getElementById('meal-food-sel').value,q=+document.getElementById('meal-food-qty').value||1;if(!fid)return;S.mealTmp.push({foodId:fid,quantity:q});document.getElementById('meal-food-qty').value='';renderMTmp();}
 function renderMTmp(){document.getElementById('meal-items-edit').innerHTML=S.mealTmp.map((item,i)=>{const f=fById(item.foodId)||fByName(item.foodName);return`<div class="erow"><span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f?esc(f.name):'?'}</span><input class="fld" type="number" min="0.01" step="0.1" value="${item.quantity}" onchange="S.mealTmp[${i}].quantity=+this.value" style="padding:7px 10px"><button class="btn bd bic" onclick="S.mealTmp.splice(${i},1);renderMTmp()">✕</button></div>`;}).join('');}
 function saveMeal(){const em=S.editingMeal;if(!em)return;const plan=S.plans.find(p=>p.id===em.planId);if(!plan)return;if(!plan[em.sub])plan[em.sub]={meals:[]};const name=document.getElementById('meal-name-inp').value.trim()||'Meal';const meal={id:em.isNew?crypto.randomUUID():(plan[em.sub].meals[em.mi]?.id||crypto.randomUUID()),name,items:S.mealTmp.map(i=>({...i}))};if(em.isNew)plan[em.sub].meals.push(meal);else plan[em.sub].meals[em.mi]=meal;save();closeDlg('dlg-meal');render();}
@@ -932,12 +932,25 @@ function pgShop(el,acts){
   const byCat={};Object.values(agg).forEach(e=>{const c=e.f.cat||'Other';if(!byCat[c])byCat[c]=[];byCat[c].push(e);});
   el.innerHTML=`<div class="page">
   <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span style="font-family:var(--serif);font-size:16px;font-style:italic;color:var(--cream);flex:1">${esc(plan.name)}</span>
-      <label class="chip"><input type="checkbox" ${S.shopWD!==false?'checked':''} onchange="S.shopWD=this.checked;render()">Weekday ×5</label>
-      <label class="chip"><input type="checkbox" ${S.shopWE?'checked':''} onchange="S.shopWE=this.checked;render()">Weekend ×2</label>
+    <div style="font-family:var(--serif);font-size:16px;font-style:italic;color:var(--cream);margin-bottom:14px">${esc(plan.name)}</div>
+    <div style="font-size:10px;font-family:var(--mono);color:var(--s6);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px">Include in list</div>
+    <div style="display:flex;gap:10px">
+      <label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:var(--rsm);border:2px solid ${S.shopWD!==false?'var(--cream)':'var(--s5)'};background:${S.shopWD!==false?'var(--cream-dim)':'transparent'};cursor:pointer;transition:all .15s">
+        <input type="checkbox" ${S.shopWD!==false?'checked':''} onchange="S.shopWD=this.checked;render()" style="width:18px;height:18px;accent-color:var(--cream);flex-shrink:0;cursor:pointer">
+        <div>
+          <div style="font-size:13px;font-weight:500;color:${S.shopWD!==false?'var(--cream)':'var(--s8)'};line-height:1.2">Weekday</div>
+          <div style="font-size:10px;font-family:var(--mono);color:var(--s6);margin-top:2px">Mon–Fri · ×5</div>
+        </div>
+      </label>
+      <label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:var(--rsm);border:2px solid ${S.shopWE?'var(--cream)':'var(--s5)'};background:${S.shopWE?'var(--cream-dim)':'transparent'};cursor:pointer;transition:all .15s">
+        <input type="checkbox" ${S.shopWE?'checked':''} onchange="S.shopWE=this.checked;render()" style="width:18px;height:18px;accent-color:var(--cream);flex-shrink:0;cursor:pointer">
+        <div>
+          <div style="font-size:13px;font-weight:500;color:${S.shopWE?'var(--cream)':'var(--s8)'};line-height:1.2">Weekend</div>
+          <div style="font-size:10px;font-family:var(--mono);color:var(--s6);margin-top:2px">Sat–Sun · ×2</div>
+        </div>
+      </label>
     </div>
-    <div style="font-size:10px;font-family:var(--mono);color:var(--s6);margin-top:10px">${Object.keys(agg).length} items</div>
+    <div style="font-size:10px;font-family:var(--mono);color:var(--s6);margin-top:12px">${Object.keys(agg).length} items total</div>
   </div>
   ${Object.keys(byCat).sort().map(cat=>`<div style="margin-bottom:18px">
     <div class="sc-hd"><span class="cdot" style="background:${cdot(cat)}"></span>${esc(cat)}</div>
