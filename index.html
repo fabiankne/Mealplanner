@@ -542,7 +542,7 @@ dialog::backdrop { background: rgba(0,0,0,.8); backdrop-filter: blur(6px); }
     <div id="meal-items-edit"></div>
     <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
       <select class="fld" id="meal-food-sel" style="flex:1;min-width:0"></select>
-      <input class="fld" id="meal-food-qty" type="number" min="0.01" step="0.1" placeholder="qty" style="width:70px;flex-shrink:0">
+      <input class="fld" id="meal-food-qty" type="number" min="1" step="5" placeholder="g / pcs" style="width:80px;flex-shrink:0">
       <button class="btn bg bsm" onclick="addMealItem()">+ Add</button>
     </div>
   </div>
@@ -692,7 +692,23 @@ let S={
 };
 function load(){
   const raw=localStorage.getItem('nutrios_v3');
-  if(raw){try{const p=JSON.parse(raw);S={...S,...p};if(!Array.isArray(S.foods))S.foods=[];if(!Array.isArray(S.plans))S.plans=[];if(S.macros&&'cal'in S.macros&&!('bodyweight'in S.macros))S.macros={bodyweight:99,bodyfatPct:0.135,activityLevel:1.5,weightLossTarget:0,proteinPerKgLBM:2.4,fatPct:0.30};}catch{seed();}}else seed();
+  if(raw){try{const p=JSON.parse(raw);S={...S,...p};if(!Array.isArray(S.foods))S.foods=[];if(!Array.isArray(S.plans))S.plans=[];if(S.macros&&'cal'in S.macros&&!('bodyweight'in S.macros))S.macros={bodyweight:99,bodyfatPct:0.135,activityLevel:1.5,weightLossTarget:0,proteinPerKgLBM:2.4,fatPct:0.30};migrateQty();}catch{seed();}}else seed();
+}
+// Convert old fractional servings (e.g. 0.5) to grams (50) for 100g foods
+function migrateQty(){
+  S.plans.forEach(plan=>{
+    ['weekday','weekend'].forEach(sub=>{
+      (plan[sub]?.meals||[]).forEach(meal=>{
+        (meal.items||[]).forEach(item=>{
+          const f=fById(item.foodId)||fByName(item.foodName);
+          if(!f)return;
+          if((f.unit||'100g')==='100g'&&item.quantity<5){
+            item.quantity=Math.round(item.quantity*100);
+          }
+        });
+      });
+    });
+  });
 }
 function seed(){S.foods=SF.map(f=>({...f,id:crypto.randomUUID()}));S.plans=[SP];S.activePlanId=SID;S.viewingPlanId=SID;save();}
 function save(){localStorage.setItem('nutrios_v3',JSON.stringify({macros:S.macros,foods:S.foods,recipes:S.recipes,plans:S.plans,activePlanId:S.activePlanId,viewingPlanId:S.viewingPlanId}));sbPlan();}
@@ -703,7 +719,18 @@ const r=(n,d=1)=>isNaN(n)?'0':(Math.round(n*(10**d))/(10**d)).toFixed(d);
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fById=id=>S.foods.find(f=>f.id===id)||S.recipes.find(x=>x.id===id);
 const fByName=n=>S.foods.find(f=>f.name===n)||S.recipes.find(x=>x.name===n);
-function iMac(item){const f=fById(item.foodId)||fByName(item.foodName);if(!f)return{cal:0,pro:0,carb:0,fat:0};const q=item.quantity||1;return{cal:f.cal*q,pro:f.pro*q,carb:f.carb*q,fat:f.fat*q};}
+function iMac(item){
+  const f=fById(item.foodId)||fByName(item.foodName);
+  if(!f)return{cal:0,pro:0,carb:0,fat:0};
+  let q=item.quantity||1;
+  if((f.unit||'100g')==='100g'){
+    // quantity stored in grams; divide by 100 to get multiplier
+    const mult=q/100;
+    return{cal:f.cal*mult,pro:f.pro*mult,carb:f.carb*mult,fat:f.fat*mult};
+  }
+  // piece/slice: quantity is count, macros are per-piece
+  return{cal:f.cal*q,pro:f.pro*q,carb:f.carb*q,fat:f.fat*q};
+}
 function mMac(meal){const t={cal:0,pro:0,carb:0,fat:0};(meal.items||[]).forEach(i=>{const m=iMac(i);t.cal+=m.cal;t.pro+=m.pro;t.carb+=m.carb;t.fat+=m.fat;});return t;}
 function dMac(sub){const t={cal:0,pro:0,carb:0,fat:0};(sub.meals||[]).forEach(m=>{const x=mMac(m);t.cal+=x.cal;t.pro+=x.pro;t.carb+=x.carb;t.fat+=x.fat;});return t;}
 
@@ -718,6 +745,49 @@ const getTgt=()=>calcT(S.macros);
 function bCls(v,t){const p=t>0?v/t:0;if(p<.85)return'cu';if(p<=1.05)return'co';if(p<=1.2)return'cw';return'cx';}
 function vCls(v,t){return bCls(v,t).replace('c','v');}
 function cdot(cat){const m={'Meat & Fish':'#c87d6a','Dairy & Eggs':'#c8a84a','Grains & Carbs':'#7ab0c8','Vegetables':'#78b88a','Fruits':'#c87e4a','Fats & Oils':'#b8a05a','Legumes':'#8aa850','Protein Supplements':'#a07ac8','Sauces & Condiments':'#c86878','Other':'#787870'};return m[cat]||'#787870';}
+
+function macroStackedBar(t){
+  const total = t.proCal + t.fatCal + t.carbCal;
+  if(total<=0) return '<div style="color:var(--s6);font-size:12px">No data</div>';
+  const pp = (t.proCal/total*100).toFixed(1);
+  const cp = (t.carbCal/total*100).toFixed(1);
+  const fp = (t.fatCal/total*100).toFixed(1);
+  return `
+    <div style="height:36px;border-radius:8px;overflow:hidden;display:flex;margin-bottom:16px">
+      <div style="width:${pp}%;background:var(--info);transition:width .5s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        ${+pp>=10?`<span style="font-family:var(--mono);font-size:11px;font-weight:500;color:rgba(0,0,0,.6);white-space:nowrap">${pp}%</span>`:''}
+      </div>
+      <div style="width:${cp}%;background:var(--warn);transition:width .5s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        ${+cp>=10?`<span style="font-family:var(--mono);font-size:11px;font-weight:500;color:rgba(0,0,0,.6);white-space:nowrap">${cp}%</span>`:''}
+      </div>
+      <div style="width:${fp}%;background:var(--sig);transition:width .5s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        ${+fp>=10?`<span style="font-family:var(--mono);font-size:11px;font-weight:500;color:rgba(0,0,0,.6);white-space:nowrap">${fp}%</span>`:''}
+      </div>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:10px;height:10px;border-radius:3px;background:var(--info);flex-shrink:0"></div>
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--s9)">Protein</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--s6)">${r(t.pro,1)}g &nbsp;·&nbsp; <b style="color:var(--info)">${pp}%</b></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:10px;height:10px;border-radius:3px;background:var(--warn);flex-shrink:0"></div>
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--s9)">Carbs</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--s6)">${r(t.carb,1)}g &nbsp;·&nbsp; <b style="color:var(--warn)">${cp}%</b></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:10px;height:10px;border-radius:3px;background:var(--sig);flex-shrink:0"></div>
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--s9)">Fat</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--s6)">${r(t.fat,1)}g &nbsp;·&nbsp; <b style="color:var(--sig)">${fp}%</b></div>
+        </div>
+      </div>
+    </div>`;
+}
 
 function mBars(act,tgt){
   return[{l:'Protein',v:act.pro,t:tgt.pro,u:'g'},{l:'Carbs',v:act.carb,t:tgt.carb,u:'g'},{l:'Fat',v:act.fat,t:tgt.fat,u:'g'},{l:'Calories',v:act.cal,t:tgt.cal,u:'kcal'}]
@@ -783,7 +853,7 @@ function pgMac(el,acts){
       </div>
       <div class="card" style="margin-top:12px">
         <div class="card-hd">Macro Distribution</div>
-        ${mBars({pro:t.pro,carb:t.carb,fat:t.fat,cal:t.cal},getTgt())}
+        <div id="macro-dist">${macroStackedBar(t)}</div>
       </div>
     </div>
   </div></div>`;
@@ -792,6 +862,7 @@ function liveMac(){
   const inp={bodyweight:+document.getElementById('m-bw').value||S.macros.bodyweight,bodyfatPct:+document.getElementById('m-bf').value||S.macros.bodyfatPct,activityLevel:+document.getElementById('m-act').value||S.macros.activityLevel,weightLossTarget:+document.getElementById('m-wlt').value,proteinPerKgLBM:+document.getElementById('m-ppkg').value||S.macros.proteinPerKgLBM,fatPct:+document.getElementById('m-fp').value||S.macros.fatPct};
   const t=calcT(inp);const v=document.querySelectorAll('.sv');
   if(v[0])v[0].textContent=r(t.cal,0);if(v[1])v[1].textContent=r(t.pro,1)+'g';if(v[2])v[2].textContent=r(t.carb,1)+'g';if(v[3])v[3].textContent=r(t.fat,1)+'g';
+  const dist=document.getElementById('macro-dist');if(dist)dist.innerHTML=macroStackedBar(t);
 }
 function saveMac(){S.macros={bodyweight:+document.getElementById('m-bw').value||S.macros.bodyweight,bodyfatPct:+document.getElementById('m-bf').value||S.macros.bodyfatPct,activityLevel:+document.getElementById('m-act').value||S.macros.activityLevel,weightLossTarget:+document.getElementById('m-wlt').value,proteinPerKgLBM:+document.getElementById('m-ppkg').value||S.macros.proteinPerKgLBM,fatPct:+document.getElementById('m-fp').value||S.macros.fatPct};save();render();}
 
@@ -893,7 +964,9 @@ function pgPlans(el,acts){
     </div>
     <div class="mc-body">
       <div class="mc-mrow"><span>P <b style="color:var(--info)">${r(mm.pro,1)}g</b></span><span>C <b style="color:var(--warn)">${r(mm.carb,1)}g</b></span><span>F <b style="color:var(--sig)">${r(mm.fat,1)}g</b></span></div>
-      ${(meal.items||[]).map(item=>{const f=fById(item.foodId)||fByName(item.foodName);if(!f)return`<div class="mitem"><span class="mitem-n" style="color:var(--err)">${esc(item.foodName||'?')}</span></div>`;const m=iMac(item);return`<div class="mitem"><span class="mitem-n">${esc(f.name)}</span><span class="mitem-q">×${item.quantity}</span><span class="mitem-c">${r(m.cal,0)}</span></div>`;}).join('')}
+      ${(meal.items||[]).map(item=>{const f=fById(item.foodId)||fByName(item.foodName);if(!f)return`<div class="mitem"><span class="mitem-n" style="color:var(--err)">${esc(item.foodName||'?')}</span></div>`;const m=iMac(item);const isGram=(f.unit||'100g')==='100g';
+              const qLabel=isGram?item.quantity+'g':'×'+item.quantity;
+              return`<div class="mitem"><span class="mitem-n">${esc(f.name)}</span><span class="mitem-q">${qLabel}</span><span class="mitem-c">${r(m.cal,0)}</span></div>`;}).join('')}
     </div>
   </div>`;}).join('')}
   </div>`;
@@ -913,8 +986,28 @@ function delPlan(id){if(S.plans.length<=1)return alert('Cannot delete the only p
 function addNewMeal(planId,sub){S.editingMeal={planId,sub,mi:-1,isNew:true};S.mealTmp=[];document.getElementById('dlg-meal-t').textContent='New Meal';document.getElementById('meal-name-inp').value='';document.getElementById('dlg-meal-del').style.display='none';popMSel();renderMTmp();document.getElementById('dlg-meal').showModal();}
 function openEditMeal(planId,sub,mi){const plan=S.plans.find(p=>p.id===planId);if(!plan)return;const meal=plan[sub]?.meals[mi];if(!meal)return;S.editingMeal={planId,sub,mi,isNew:false};S.mealTmp=(meal.items||[]).map(i=>({...i}));document.getElementById('dlg-meal-t').textContent='Edit Meal';document.getElementById('meal-name-inp').value=meal.name||'';document.getElementById('dlg-meal-del').style.display='';popMSel();renderMTmp();document.getElementById('dlg-meal').showModal();}
 function popMSel(){document.getElementById('meal-food-sel').innerHTML=[...S.foods,...S.recipes].slice().sort((a,b)=>a.name.localeCompare(b.name)).map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');}
-function addMealItem(){const fid=document.getElementById('meal-food-sel').value,q=+document.getElementById('meal-food-qty').value||1;if(!fid)return;S.mealTmp.push({foodId:fid,quantity:q});document.getElementById('meal-food-qty').value='';renderMTmp();}
-function renderMTmp(){document.getElementById('meal-items-edit').innerHTML=S.mealTmp.map((item,i)=>{const f=fById(item.foodId)||fByName(item.foodName);return`<div class="erow"><span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f?esc(f.name):'?'}</span><input class="fld" type="number" min="0.01" step="0.1" value="${item.quantity}" onchange="S.mealTmp[${i}].quantity=+this.value" style="padding:7px 10px"><button class="btn bd bic" onclick="S.mealTmp.splice(${i},1);renderMTmp()">✕</button></div>`;}).join('');}
+function addMealItem(){
+  const fid=document.getElementById('meal-food-sel').value;
+  if(!fid)return;
+  const f=fById(fid);
+  const isGram=(f?.unit||'100g')==='100g';
+  const inputVal=+document.getElementById('meal-food-qty').value;
+  const q=inputVal||(isGram?100:1);
+  S.mealTmp.push({foodId:fid,quantity:q});
+  document.getElementById('meal-food-qty').value='';
+  renderMTmp();
+}
+function renderMTmp(){document.getElementById('meal-items-edit').innerHTML=S.mealTmp.map((item,i)=>{
+  const f=fById(item.foodId)||fByName(item.foodName);
+  const isGram=(f?.unit||'100g')==='100g';
+  const unitLbl=isGram?'g':f?.unit==='1'?'pcs':'×';
+  const step=isGram?5:1;
+  return`<div style="display:grid;grid-template-columns:1fr 80px 36px 32px;gap:6px;align-items:center;margin-bottom:8px">
+    <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f?esc(f.name):'?'}</span>
+    <input class="fld" type="number" min="1" step="${step}" value="${item.quantity}" onchange="S.mealTmp[${i}].quantity=+this.value" style="padding:7px 10px">
+    <span style="font-size:11px;font-family:var(--mono);color:var(--s6)">${unitLbl}</span>
+    <button class="btn bd bic" onclick="S.mealTmp.splice(${i},1);renderMTmp()">✕</button>
+  </div>`;}).join('');}
 function saveMeal(){const em=S.editingMeal;if(!em)return;const plan=S.plans.find(p=>p.id===em.planId);if(!plan)return;if(!plan[em.sub])plan[em.sub]={meals:[]};const name=document.getElementById('meal-name-inp').value.trim()||'Meal';const meal={id:em.isNew?crypto.randomUUID():(plan[em.sub].meals[em.mi]?.id||crypto.randomUUID()),name,items:S.mealTmp.map(i=>({...i}))};if(em.isNew)plan[em.sub].meals.push(meal);else plan[em.sub].meals[em.mi]=meal;save();closeDlg('dlg-meal');render();}
 function deleteMeal(){const em=S.editingMeal;if(!em||em.isNew)return;if(!confirm('Delete?'))return;const plan=S.plans.find(p=>p.id===em.planId);if(plan&&plan[em.sub])plan[em.sub].meals.splice(em.mi,1);save();closeDlg('dlg-meal');render();}
 function openNote(id){const p=S.plans.find(x=>x.id===id);if(!p)return;S.viewingPlanId=id;document.getElementById('plan-note-inp').value=p.note||'';document.getElementById('dlg-note').showModal();}
@@ -954,7 +1047,7 @@ function pgShop(el,acts){
   </div>
   ${Object.keys(byCat).sort().map(cat=>`<div style="margin-bottom:18px">
     <div class="sc-hd"><span class="cdot" style="background:${cdot(cat)}"></span>${esc(cat)}</div>
-    ${byCat[cat].map(e=>{const key=e.f.name,done=!!shopDone[key],unit=e.f.unit==='100g'?'g':e.f.unit==='1'?'pcs':'×',qty=e.f.unit==='100g'?r(e.total*100,0):r(e.total,1);
+    ${byCat[cat].map(e=>{const key=e.f.name,done=!!shopDone[key],unit=e.f.unit==='100g'?'g':e.f.unit==='1'?'pcs':'×',qty=e.f.unit==='100g'?r(e.total,0):r(e.total,1);
     return`<div class="si${done?' done':''}" id="si${btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g,'')}">
       <input type="checkbox" class="si-cb" ${done?'checked':''} onchange="shopDone[${JSON.stringify(key)}]=this.checked;this.closest('.si').classList.toggle('done',this.checked)">
       <span class="si-n">${esc(key)}</span><span class="si-q">${qty} ${unit}</span>
@@ -962,7 +1055,7 @@ function pgShop(el,acts){
   </div>`).join('')}
   </div>`;
 }
-function copyShop(){const plan=S.plans.find(p=>p.id===S.activePlanId)||S.plans[0];if(!plan)return;const agg={};const add=(sp,mult)=>(sp.meals||[]).forEach(m=>(m.items||[]).forEach(item=>{const f=fById(item.foodId)||fByName(item.foodName);if(!f)return;if(!agg[f.name])agg[f.name]={f,total:0};agg[f.name].total+=(item.quantity||1)*mult;}));if(S.shopWD!==false)add(plan.weekday||{},5);if(S.shopWE)add(plan.weekend||{},2);const txt=Object.values(agg).map(e=>{const qty=e.f.unit==='100g'?`${r(e.total*100,0)}g`:r(e.total,1);return`☐ ${e.f.name} — ${qty}`;}).join('\n');navigator.clipboard.writeText(txt).then(()=>alert('Copied!'));}
+function copyShop(){const plan=S.plans.find(p=>p.id===S.activePlanId)||S.plans[0];if(!plan)return;const agg={};const add=(sp,mult)=>(sp.meals||[]).forEach(m=>(m.items||[]).forEach(item=>{const f=fById(item.foodId)||fByName(item.foodName);if(!f)return;if(!agg[f.name])agg[f.name]={f,total:0};agg[f.name].total+=(item.quantity||1)*mult;}));if(S.shopWD!==false)add(plan.weekday||{},5);if(S.shopWE)add(plan.weekend||{},2);const txt=Object.values(agg).map(e=>{const qty=e.f.unit==='100g'?`${r(e.total,0)}g`:r(e.total,1);return`☐ ${e.f.name} — ${qty}`;}).join('\n');navigator.clipboard.writeText(txt).then(()=>alert('Copied!'));}
 
 // ═══ HISTORY ═════════════════════════════════════════════
 function pgHist(el,acts){
